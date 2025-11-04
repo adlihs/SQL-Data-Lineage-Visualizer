@@ -290,10 +290,41 @@ export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick })
         initialNodes.forEach(node => {
             const depth = nodeDepths.get(node.id) ?? 0;
             node.x = (depth * xSpacing) + 50 + (NODE_WIDTH / 2);
-            // node.y is now pre-calculated
         });
         
+        // Find bounds and apply offset to ensure all coordinates are positive
+        if (initialNodes.length > 0) {
+            let minX = Infinity;
+            let minY = Infinity;
+
+            initialNodes.forEach(node => {
+                const nodeHeight = HEADER_HEIGHT + (node.columns.length * COLUMN_HEIGHT);
+                const nodeLeft = (node.x ?? 0) - (NODE_WIDTH / 2);
+                const nodeTop = (node.y ?? 0) - (nodeHeight / 2);
+
+                if (nodeLeft < minX) minX = nodeLeft;
+                if (nodeTop < minY) minY = nodeTop;
+            });
+
+            const padding = 50;
+            const offsetX = minX < padding ? -minX + padding : 0;
+            const offsetY = minY < padding ? -minY + padding : 0;
+
+            if (offsetX > 0 || offsetY > 0) {
+                initialNodes.forEach(node => {
+                    node.x = (node.x ?? 0) + offsetX;
+                    node.y = (node.y ?? 0) + offsetY;
+                });
+            }
+        }
+        
         setNodes(initialNodes);
+        
+        // Reset scroll position after layout calculation
+        if (containerRef.current) {
+            containerRef.current.scrollTop = 0;
+            containerRef.current.scrollLeft = 0;
+        }
 
     }, [data, nodeDepths]);
     

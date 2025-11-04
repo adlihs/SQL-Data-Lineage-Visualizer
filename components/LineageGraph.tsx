@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import * as d3 from 'd3';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 import type { LineageData, D3Node, Node, Edge } from '../types';
 import { NodeType } from '../types';
 import { DBTIcon, PostgreSQLIcon } from './icons';
@@ -113,8 +115,11 @@ interface LineageGraphProps {
 
 export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick }) => {
     const containerRef = useRef<HTMLDivElement>(null);
+    const captureRef = useRef<HTMLDivElement>(null);
     const [nodes, setNodes] = useState<D3Node[]>([]);
     const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
+    const [isExporting, setIsExporting] = useState(false);
+    const [showExportMenu, setShowExportMenu] = useState(false);
     
     const handleNodeDrag = useCallback((nodeId: string, position: { x: number; y: number }) => {
         setNodes(currentNodes =>
@@ -328,7 +333,51 @@ export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick })
 
     const handleClearSelection = useCallback(() => {
         setSelectedEdge(null);
+        setShowExportMenu(false);
     }, []);
+
+    const handleExport = useCallback(async (format: 'png' | 'pdf') => {
+        if (!captureRef.current || isExporting) return;
+    
+        setIsExporting(true);
+        setShowExportMenu(false);
+    
+        // Give a brief moment for the UI to update (e.g., hide the menu)
+        await new Promise(resolve => setTimeout(resolve, 100));
+    
+        try {
+            const canvas = await html2canvas(captureRef.current, {
+                useCORS: true,
+                scale: 2, // for better resolution
+                logging: false,
+            });
+            
+            if (format === 'png') {
+                const image = canvas.toDataURL('image/png', 1.0);
+                const link = document.createElement('a');
+                link.href = image;
+                link.download = 'data-lineage.png';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            } else if (format === 'pdf') {
+                const imgData = canvas.toDataURL('image/jpeg', 0.9);
+                const pdf = new jsPDF({
+                    orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+                    unit: 'px',
+                    format: [canvas.width, canvas.height],
+                    hotfixes: ['px_scaling'],
+                });
+                pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+                pdf.save('data-lineage.pdf');
+            }
+        } catch (error) {
+            console.error("Export failed:", error);
+            alert("Sorry, the export failed. Please try again.");
+        } finally {
+            setIsExporting(false);
+        }
+    }, [isExporting]);
 
     const getEdgeStyle = useCallback((currentEdge: Edge): { stroke: string; strokeWidth: number; opacity: number; isRelated: boolean; } => {
         if (!selectedEdge) {
@@ -347,94 +396,134 @@ export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick })
     }, [selectedEdge]);
 
     return (
-        <div ref={containerRef} className="w-full h-full relative overflow-auto bg-dots" onClick={handleClearSelection}>
-             <svg width={graphDimensions.width} height={graphDimensions.height} className="absolute top-0 left-0">
-                <defs>
-                    <marker
-                        id="arrowhead"
-                        viewBox="-0 -5 10 10"
-                        refX="5"
-                        refY="0"
-                        orient="auto"
-                        markerWidth="8"
-                        markerHeight="8"
-                        xoverflow="visible">
-                        <path d="M 0,-5 L 10 ,0 L 0,5" fill="#9ca3af" strokeLinejoin="round"></path>
-                    </marker>
-                    <marker
-                        id="arrowhead-active"
-                        viewBox="-0 -5 10 10"
-                        refX="5"
-                        refY="0"
-                        orient="auto"
-                        markerWidth="8"
-                        markerHeight="8"
-                        xoverflow="visible">
-                        <path d="M 0,-5 L 10 ,0 L 0,5" fill="#2563eb" strokeLinejoin="round"></path>
-                    </marker>
-                </defs>
-                <g>
-                    {data.edges.map((edge, i) => {
-                        const sourceNode = nodeMap.get(edge.sourceNodeId);
-                        const targetNode = nodeMap.get(edge.targetNodeId);
-                        
-                        if (!sourceNode || !targetNode || sourceNode.x === undefined || sourceNode.y === undefined || targetNode.x === undefined || targetNode.y === undefined) {
-                            return null;
-                        }
+        <div ref={containerRef} className="w-full h-full relative overflow-auto" onClick={handleClearSelection}>
+            <div
+                ref={captureRef}
+                className="relative bg-dots"
+                style={{ width: graphDimensions.width, height: graphDimensions.height }}
+            >
+                <svg width={graphDimensions.width} height={graphDimensions.height} className="absolute top-0 left-0">
+                    <defs>
+                        <marker
+                            id="arrowhead"
+                            viewBox="-0 -5 10 10"
+                            refX="5"
+                            refY="0"
+                            orient="auto"
+                            markerWidth="8"
+                            markerHeight="8"
+                            xoverflow="visible">
+                            <path d="M 0,-5 L 10 ,0 L 0,5" fill="#9ca3af" strokeLinejoin="round"></path>
+                        </marker>
+                        <marker
+                            id="arrowhead-active"
+                            viewBox="-0 -5 10 10"
+                            refX="5"
+                            refY="0"
+                            orient="auto"
+                            markerWidth="8"
+                            markerHeight="8"
+                            xoverflow="visible">
+                            <path d="M 0,-5 L 10 ,0 L 0,5" fill="#2563eb" strokeLinejoin="round"></path>
+                        </marker>
+                    </defs>
+                    <g>
+                        {data.edges.map((edge, i) => {
+                            const sourceNode = nodeMap.get(edge.sourceNodeId);
+                            const targetNode = nodeMap.get(edge.targetNodeId);
+                            
+                            if (!sourceNode || !targetNode || sourceNode.x === undefined || sourceNode.y === undefined || targetNode.x === undefined || targetNode.y === undefined) {
+                                return null;
+                            }
 
-                        const sourceNodeHeight = HEADER_HEIGHT + (sourceNode.columns.length * COLUMN_HEIGHT);
-                        const targetNodeHeight = HEADER_HEIGHT + (targetNode.columns.length * COLUMN_HEIGHT);
+                            const sourceNodeHeight = HEADER_HEIGHT + (sourceNode.columns.length * COLUMN_HEIGHT);
+                            const targetNodeHeight = HEADER_HEIGHT + (targetNode.columns.length * COLUMN_HEIGHT);
 
-                        const y1 = (sourceNode.y - sourceNodeHeight / 2) + getColumnYOffset(edge.sourceNodeId, edge.sourceColumn);
-                        const y2 = (targetNode.y - targetNodeHeight / 2) + getColumnYOffset(edge.targetNodeId, edge.targetColumn);
-                        
-                        let x1, x2;
-                        const markerOffset = 10;
-                        if (sourceNode.x < targetNode.x) {
-                            x1 = sourceNode.x + NODE_WIDTH / 2;
-                            x2 = targetNode.x - NODE_WIDTH / 2 - markerOffset;
-                        } else {
-                            x1 = sourceNode.x - NODE_WIDTH / 2;
-                            x2 = targetNode.x + NODE_WIDTH / 2 + markerOffset;
-                        }
+                            const y1 = (sourceNode.y - sourceNodeHeight / 2) + getColumnYOffset(edge.sourceNodeId, edge.sourceColumn);
+                            const y2 = (targetNode.y - targetNodeHeight / 2) + getColumnYOffset(edge.targetNodeId, edge.targetColumn);
+                            
+                            let x1, x2;
+                            const markerOffset = 10;
+                            if (sourceNode.x < targetNode.x) {
+                                x1 = sourceNode.x + NODE_WIDTH / 2;
+                                x2 = targetNode.x - NODE_WIDTH / 2 - markerOffset;
+                            } else {
+                                x1 = sourceNode.x - NODE_WIDTH / 2;
+                                x2 = targetNode.x + NODE_WIDTH / 2 + markerOffset;
+                            }
 
-                        const path = d3.linkHorizontal()({
-                            source: [x1, y1],
-                            target: [x2, y2]
-                        });
-                        
-                        const style = getEdgeStyle(edge);
-                        
-                        return (
-                           <path
-                                key={`${edge.sourceNodeId}-${edge.sourceColumn}-${edge.targetNodeId}-${edge.targetColumn}-${i}`}
-                                d={path || ''}
-                                fill="none"
-                                stroke={style.stroke}
-                                strokeWidth={style.strokeWidth}
-                                markerEnd={style.isRelated ? 'url(#arrowhead-active)' : 'url(#arrowhead)'}
-                                style={{
-                                    opacity: style.opacity,
-                                    transition: 'stroke 0.2s, stroke-width 0.2s, opacity 0.2s',
-                                    cursor: 'pointer',
-                                }}
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSelectedEdge(edge);
-                                }}
-                            />
-                        );
-                    })}
-                </g>
-            </svg>
-            {nodes.map(node => (
-                <NodeComponent 
-                    key={node.id} 
-                    node={node} 
-                    onNodeClick={onNodeClick}
-                    onNodeDrag={handleNodeDrag}
-                />
-            ))}
+                            const path = d3.linkHorizontal()({
+                                source: [x1, y1],
+                                target: [x2, y2]
+                            });
+                            
+                            const style = getEdgeStyle(edge);
+                            
+                            return (
+                               <path
+                                    key={`${edge.sourceNodeId}-${edge.sourceColumn}-${edge.targetNodeId}-${edge.targetColumn}-${i}`}
+                                    d={path || ''}
+                                    fill="none"
+                                    stroke={style.stroke}
+                                    strokeWidth={style.strokeWidth}
+                                    markerEnd={style.isRelated ? 'url(#arrowhead-active)' : 'url(#arrowhead)'}
+                                    style={{
+                                        opacity: style.opacity,
+                                        transition: 'stroke 0.2s, stroke-width 0.2s, opacity 0.2s',
+                                        cursor: 'pointer',
+                                    }}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setSelectedEdge(edge);
+                                    }}
+                                />
+                            );
+                        })}
+                    </g>
+                </svg>
+                {nodes.map(node => (
+                    <NodeComponent 
+                        key={node.id} 
+                        node={node} 
+                        onNodeClick={onNodeClick}
+                        onNodeDrag={handleNodeDrag}
+                    />
+                ))}
+            </div>
+
+             {/* Export Controls */}
+            <div className="absolute top-4 right-4 z-10">
+                <div className="relative" onClick={(e) => e.stopPropagation()}>
+                    <button
+                        onClick={() => setShowExportMenu(!showExportMenu)}
+                        disabled={isExporting || !data.nodes.length}
+                        className="bg-white text-gray-700 font-semibold py-2 px-4 border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 disabled:bg-gray-200 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                        aria-haspopup="true"
+                        aria-expanded={showExportMenu}
+                    >
+                        {isExporting ? (
+                             <>
+                                <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-gray-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                Exporting...
+                            </>
+                        ) : (
+                            <>
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                                Export
+                            </>
+                        )}
+                    </button>
+                    {showExportMenu && (
+                        <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 ring-1 ring-black ring-opacity-5" role="menu">
+                            <button onClick={() => handleExport('png')} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" role="menuitem">Export as PNG</button>
+                            <button onClick={() => handleExport('pdf')} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" role="menuitem">Export as PDF</button>
+                        </div>
+                    )}
+                </div>
+            </div>
         </div>
     );
 };

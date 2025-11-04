@@ -6,9 +6,23 @@ import type { LineageData, D3Node, Node, Edge } from '../types';
 import { NodeType } from '../types';
 import { DBTIcon, PostgreSQLIcon } from './icons';
 
+const InfoIcon = ({ className }: { className: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+);
+
+const ChevronIcon = ({ className, isCollapsed }: { className: string, isCollapsed: boolean }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" className={`${className} transition-transform duration-200`} style={{ transform: isCollapsed ? 'rotate(0deg)' : 'rotate(180deg)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+    </svg>
+);
+
 interface NodeComponentProps {
     node: D3Node;
+    isCollapsed: boolean;
     onNodeClick: (node: Node) => void;
+    onToggleCollapse: (nodeId: string) => void;
     onNodeDrag: (nodeId: string, position: { x: number; y: number }) => void;
 }
 
@@ -24,14 +38,13 @@ const NODE_WIDTH = 256;
 const HEADER_HEIGHT = 60;
 const COLUMN_HEIGHT = 28;
 
-const NodeComponent: React.FC<NodeComponentProps> = ({ node, onNodeClick, onNodeDrag }) => {
+const NodeComponent: React.FC<NodeComponentProps> = ({ node, isCollapsed, onNodeClick, onToggleCollapse, onNodeDrag }) => {
     const nodeRef = useRef<HTMLDivElement>(null);
-    // Ref to hold the current node state to avoid stale closures in drag handler
     const currentNodeRef = useRef(node);
     currentNodeRef.current = node;
 
     const Icon = ICONS[node.type];
-    const nodeHeight = HEADER_HEIGHT + (node.columns.length * COLUMN_HEIGHT);
+    const nodeHeight = isCollapsed ? HEADER_HEIGHT : HEADER_HEIGHT + (node.columns.length * COLUMN_HEIGHT);
 
     useEffect(() => {
         if (!nodeRef.current) return;
@@ -39,7 +52,6 @@ const NodeComponent: React.FC<NodeComponentProps> = ({ node, onNodeClick, onNode
         const selection = d3.select(nodeRef.current);
         const dragHandler = d3.drag<HTMLDivElement, unknown>()
             .on('start', function(event) {
-                // Prevent click from firing on drag end
                 event.sourceEvent.stopPropagation();
                 d3.select(this).style('cursor', 'grabbing');
             })
@@ -60,48 +72,62 @@ const NodeComponent: React.FC<NodeComponentProps> = ({ node, onNodeClick, onNode
         return () => {
             selection.on('.drag', null);
         };
-    }, [onNodeDrag]); // Effect depends on onNodeDrag, which is stable due to useCallback
+    }, [onNodeDrag]);
 
     return (
         <div
             ref={nodeRef}
             id={`node-${node.id}`}
-            className="absolute bg-white border border-gray-200 rounded-lg shadow-lg cursor-grab"
+            className="absolute bg-white border border-gray-200 rounded-lg shadow-lg cursor-grab transition-all duration-300 ease-in-out overflow-hidden"
             style={{ 
                 width: `${NODE_WIDTH}px`,
+                height: `${nodeHeight}px`,
                 left: `${node.x ?? 0}px`, 
                 top: `${node.y ?? 0}px`,
                 transform: `translate(-${NODE_WIDTH / 2}px, -${nodeHeight / 2}px)`,
             }}
-            onClick={(e) => {
-                if (e.defaultPrevented) return; // Legacy check, though d3 v6+ uses sourceEvent.stopPropagation()
-                onNodeClick(node);
-            }}
         >
             <div 
-                className="px-4 py-3 border-b border-gray-200"
+                className="px-4 border-b border-gray-200 cursor-pointer hover:bg-gray-50 flex items-center justify-between"
+                style={{ height: `${HEADER_HEIGHT}px` }}
+                onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleCollapse(node.id);
+                }}
             >
-                <div className="flex items-center gap-3">
-                    {Icon && <Icon className="w-6 h-6" />}
-                    <div>
-                        <p className="font-bold text-gray-800 truncate">{node.name}</p>
+                <div className="flex items-center gap-3 min-w-0">
+                    {Icon && <Icon className="w-6 h-6 flex-shrink-0" />}
+                    <div className="min-w-0">
+                        <p className="font-bold text-gray-800 truncate" title={node.name}>{node.name}</p>
                         <p className="text-xs text-gray-500">{node.type}</p>
                     </div>
                 </div>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onNodeClick(node);
+                        }}
+                        className="p-1 rounded-full text-gray-400 hover:bg-gray-200 hover:text-gray-700"
+                        aria-label={`View details for ${node.name}`}
+                    >
+                        <InfoIcon className="w-5 h-5" />
+                    </button>
+                     <ChevronIcon className="w-5 h-5 text-gray-400" isCollapsed={isCollapsed} />
+                </div>
             </div>
+            
             <ul className="py-2">
-                {node.columns.map((col) => {
-                    return (
-                        <li 
-                            key={col.name}
-                            id={`col-${node.id}-${col.name}`}
-                            className={`px-4 py-1 text-sm text-gray-700 relative`}
-                            style={{ height: `${COLUMN_HEIGHT}px` }}
-                        >
-                            <span>{col.name}</span>
-                        </li>
-                    );
-                })}
+                {node.columns.map((col) => (
+                    <li 
+                        key={col.name}
+                        id={`col-${node.id}-${col.name}`}
+                        className={`px-4 py-1 text-sm text-gray-700 relative`}
+                        style={{ height: `${COLUMN_HEIGHT}px` }}
+                    >
+                        <span>{col.name}</span>
+                    </li>
+                ))}
             </ul>
         </div>
     );
@@ -120,6 +146,19 @@ export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick })
     const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
     const [isExporting, setIsExporting] = useState(false);
     const [showExportMenu, setShowExportMenu] = useState(false);
+    const [collapsedNodes, setCollapsedNodes] = useState(new Set<string>());
+
+    const handleToggleCollapse = useCallback((nodeId: string) => {
+        setCollapsedNodes(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(nodeId)) {
+                newSet.delete(nodeId);
+            } else {
+                newSet.add(nodeId);
+            }
+            return newSet;
+        });
+    }, []);
     
     const handleNodeDrag = useCallback((nodeId: string, position: { x: number; y: number }) => {
         setNodes(currentNodes =>
@@ -139,7 +178,6 @@ export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick })
         const nodeOrder = new Map<string, number>();
         data.nodes.forEach((node, index) => nodeOrder.set(node.id, index));
 
-        // 1. Find connected components using an undirected graph representation
         const adj = new Map<string, string[]>();
         data.nodes.forEach(node => adj.set(node.id, []));
         data.edges.forEach(edge => {
@@ -170,14 +208,12 @@ export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick })
             }
         }
 
-        // 2. Order components based on the script appearance of their first node
         components.sort((compA, compB) => {
             const minOrderA = Math.min(...compA.map(node => nodeOrder.get(node.id)!));
             const minOrderB = Math.min(...compB.map(node => nodeOrder.get(node.id)!));
             return minOrderA - minOrderB;
         });
 
-        // 3. Calculate depths for each component and apply an offset for horizontal layout
         const finalDepths = new Map<string, number>();
         let depthOffset = 0;
 
@@ -187,7 +223,6 @@ export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick })
                 componentNodeIds.has(e.sourceNodeId) && componentNodeIds.has(e.targetNodeId)
             );
 
-            // Calculate depths within this component using topological sort
             const depths = new Map<string, number>();
             const inDegree = new Map<string, number>();
             const compAdj = new Map<string, string[]>();
@@ -230,14 +265,14 @@ export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick })
             
             let maxDepthInComponent = 0;
             component.forEach(node => {
-                if (!depths.has(node.id)) depths.set(node.id, 0); // Handle cycles
+                if (!depths.has(node.id)) depths.set(node.id, 0);
                 
                 const nodeDepth = depths.get(node.id)!;
                 finalDepths.set(node.id, nodeDepth + depthOffset);
                 if (nodeDepth > maxDepthInComponent) maxDepthInComponent = nodeDepth;
             });
 
-            depthOffset += maxDepthInComponent + 2; // Add space between components
+            depthOffset += maxDepthInComponent + 2;
         }
 
         return finalDepths;
@@ -252,11 +287,10 @@ export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick })
         });
 
         const height = containerRef.current.clientHeight;
-        const xSpacing = NODE_WIDTH + 120; // Increased spacing
+        const xSpacing = NODE_WIDTH + 120;
         
         const initialNodes: D3Node[] = JSON.parse(JSON.stringify(data.nodes));
 
-        // Group nodes by depth column
         const nodesByDepth: { [depth: number]: D3Node[] } = {};
         initialNodes.forEach(node => {
             const depth = nodeDepths.get(node.id) ?? 0;
@@ -266,7 +300,6 @@ export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick })
             nodesByDepth[depth].push(node);
         });
 
-        // For each depth level, sort nodes by their original order and calculate Y positions
         Object.values(nodesByDepth).forEach(nodesInDepth => {
             nodesInDepth.sort((a, b) => (nodeOrder.get(a.id) ?? 0) - (nodeOrder.get(b.id) ?? 0));
 
@@ -282,7 +315,7 @@ export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick })
 
             nodesInDepth.forEach(node => {
                 const nodeHeight = HEADER_HEIGHT + (node.columns.length * COLUMN_HEIGHT);
-                node.y = currentY + (nodeHeight / 2); // set y to the center of the node's vertical slot
+                node.y = currentY + (nodeHeight / 2);
                 currentY += nodeHeight + verticalMargin;
             });
         });
@@ -292,7 +325,6 @@ export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick })
             node.x = (depth * xSpacing) + 50 + (NODE_WIDTH / 2);
         });
         
-        // Find bounds and apply offset to ensure all coordinates are positive
         if (initialNodes.length > 0) {
             let minX = Infinity;
             let minY = Infinity;
@@ -320,7 +352,6 @@ export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick })
         
         setNodes(initialNodes);
         
-        // Reset scroll position after layout calculation
         if (containerRef.current) {
             containerRef.current.scrollTop = 0;
             containerRef.current.scrollLeft = 0;
@@ -345,7 +376,8 @@ export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick })
         let maxY = 0;
 
         nodes.forEach(node => {
-            const nodeHeight = HEADER_HEIGHT + (node.columns.length * COLUMN_HEIGHT);
+            const isCollapsed = collapsedNodes.has(node.id);
+            const nodeHeight = isCollapsed ? HEADER_HEIGHT : HEADER_HEIGHT + (node.columns.length * COLUMN_HEIGHT);
             if (node.x !== undefined && node.y !== undefined) {
                 maxX = Math.max(maxX, node.x + NODE_WIDTH / 2);
                 maxY = Math.max(maxY, node.y + nodeHeight / 2);
@@ -360,7 +392,7 @@ export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick })
             width: Math.max(containerWidth, maxX + padding), 
             height: Math.max(containerHeight, maxY + padding)
         };
-    }, [nodes]);
+    }, [nodes, collapsedNodes]);
 
     const handleClearSelection = useCallback(() => {
         setSelectedEdge(null);
@@ -373,13 +405,12 @@ export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick })
         setIsExporting(true);
         setShowExportMenu(false);
     
-        // Give a brief moment for the UI to update (e.g., hide the menu)
         await new Promise(resolve => setTimeout(resolve, 100));
     
         try {
             const canvas = await html2canvas(captureRef.current, {
                 useCORS: true,
-                scale: 2, // for better resolution
+                scale: 2,
                 logging: false,
             });
             
@@ -467,12 +498,18 @@ export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick })
                                 return null;
                             }
 
-                            const sourceNodeHeight = HEADER_HEIGHT + (sourceNode.columns.length * COLUMN_HEIGHT);
-                            const targetNodeHeight = HEADER_HEIGHT + (targetNode.columns.length * COLUMN_HEIGHT);
+                            const isSourceCollapsed = collapsedNodes.has(edge.sourceNodeId);
+                            const isTargetCollapsed = collapsedNodes.has(edge.targetNodeId);
 
-                            const y1 = (sourceNode.y - sourceNodeHeight / 2) + getColumnYOffset(edge.sourceNodeId, edge.sourceColumn);
-                            const y2 = (targetNode.y - targetNodeHeight / 2) + getColumnYOffset(edge.targetNodeId, edge.targetColumn);
+                            const sourceNodeHeight = isSourceCollapsed ? HEADER_HEIGHT : HEADER_HEIGHT + (sourceNode.columns.length * COLUMN_HEIGHT);
+                            const targetNodeHeight = isTargetCollapsed ? HEADER_HEIGHT : HEADER_HEIGHT + (targetNode.columns.length * COLUMN_HEIGHT);
+
+                            const sourceColumnOffset = isSourceCollapsed ? HEADER_HEIGHT / 2 : getColumnYOffset(edge.sourceNodeId, edge.sourceColumn);
+                            const targetColumnOffset = isTargetCollapsed ? HEADER_HEIGHT / 2 : getColumnYOffset(edge.targetNodeId, edge.targetColumn);
                             
+                            const y1 = (sourceNode.y - sourceNodeHeight / 2) + sourceColumnOffset;
+                            const y2 = (targetNode.y - targetNodeHeight / 2) + targetColumnOffset;
+
                             let x1, x2;
                             const markerOffset = 10;
                             if (sourceNode.x < targetNode.x) {
@@ -516,7 +553,9 @@ export const LineageGraph: React.FC<LineageGraphProps> = ({ data, onNodeClick })
                     <NodeComponent 
                         key={node.id} 
                         node={node} 
+                        isCollapsed={collapsedNodes.has(node.id)}
                         onNodeClick={onNodeClick}
+                        onToggleCollapse={handleToggleCollapse}
                         onNodeDrag={handleNodeDrag}
                     />
                 ))}

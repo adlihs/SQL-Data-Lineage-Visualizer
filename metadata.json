@@ -1,0 +1,5 @@
+{
+  "name": "SQL Data Lineage Visualizer",
+  "description": "An application that takes a SQL script as input and generates an interactive data lineage graph, showing how data flows between tables and columns.",
+  "requestFramePermissions": []
+}
